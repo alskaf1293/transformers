@@ -5,6 +5,7 @@ import sys
 
 
 def translate_sentence(model, sentence, german, english, device, max_length=50):
+    model = model.to(device)
     # Load german tokenizer
     spacy_ger = spacy.load("de_core_news_sm")
 
@@ -32,9 +33,7 @@ def translate_sentence(model, sentence, german, english, device, max_length=50):
             output = model(sentence_tensor.transpose(0,1).to(device), trg_tensor.transpose(0,1).to(device))
             #print(output.shape)
 
-        best_guess = output.argmax(2)[-1, :][0]
-        #print(best_guess)
-        #best_guess = best_guess.item()
+        best_guess = output.reshape(-1,1,len(english.vocab)).argmax(2)[-1, :].item()
         outputs.append(best_guess)
 
         if best_guess == english.vocab.stoi["<eos>"]:

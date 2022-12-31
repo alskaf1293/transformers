@@ -17,7 +17,7 @@ class SelfAttention(nn.Module):
         self.toKeys = nn.Linear(embeddingSize, embeddingSize)
 
         self.finalLinear = nn.Linear(self.heads*self.head_dimensions,self.heads*self.head_dimensions)
-    def forward(self, queries, keys, values, mask):
+    def forward(self, values, keys, queries, mask):
         N, sequenceLength, _ = queries.shape
 
         valueLength, keyLength, queryLength = values.shape[1], keys.shape[1], queries.shape[1]
@@ -37,26 +37,26 @@ class SelfAttention(nn.Module):
         # N, keys sequence length, heads, head_dimensions
         # to
         # N, heads, queries sequence length, keys sequence length
-        attention = torch.einsum("nqhl,nkhl->nhqk", [queries, keys])
+        attention = torch.einsum("nqhd,nkhd->nhqk", [queries, keys])
         #print(N, sequenceLength, attention.shape)
         if mask != None:
             #print(attention.shape,mask.shape)
             attention = attention.masked_fill(mask==0, float('-1e20'))
         
-        attention = F.softmax(attention / keys.size()[1])
+        attention = torch.softmax(attention / (self.embeddingSize**(1/2)), dim=3)#F.softmax(attention / keys.size()[1])
 
         #multiplying matrix of size
         # N, heads, queries sequence length, keys sequence length
         # N, values sequence length, heads, head_dimensions
         # N, queries sequence length, heads, head_dimensions
 
-        output = torch.einsum("nhqk,nvhd->nqhd", [attention, values])
+        output = torch.einsum("nhql,nlhd->nqhd", [attention, values])
         #print(N, sequenceLength, output.shape)
         output = output.reshape(N,sequenceLength,self.embeddingSize)
         return self.finalLinear(output)
 
 class TransformerBlock(nn.Module):
-    def __init__(self, embeddingSize, heads, linearDimension):
+    def __init__(self, embeddingSize, heads, dropout, linearDimension):
         super(TransformerBlock, self).__init__()
         self.attention = SelfAttention(embeddingSize,heads)
         self.norm1 = nn.LayerNorm(embeddingSize)
@@ -64,15 +64,18 @@ class TransformerBlock(nn.Module):
 
         self.linear1 = nn.Linear(embeddingSize, linearDimension*embeddingSize)
         self.linear2 = nn.Linear(linearDimension*embeddingSize, embeddingSize)
-    def forward(self, queries, keys, values, mask):
-        output = self.attention(queries,keys,values,mask)
-        x = self.norm1(output+queries)
-        output = self.linear2(F.relu(self.linear1(output)))
 
-        return self.norm2(output+x)
+        self.dropout = nn.Dropout(dropout)
+    def forward(self, values, keys, queries, mask):
+        output = self.attention(values,keys,queries,mask)
+        x = self.dropout(self.norm1(output+queries))
+        
+        forward = self.linear2(F.relu(self.linear1(x)))
+
+        return self.dropout(self.norm2(forward+x))
 
 class Encoder(nn.Module):
-    def __init__(self, vocabSize, maxLength, embeddingSize, heads, linearDimension, numLayers, device):
+    def __init__(self, vocabSize, embeddingSize, numLayers, heads, device, linearDimension, dropout, maxLength):
         super(Encoder, self).__init__()
         self.numLayer = numLayers
         self.device = device
@@ -81,33 +84,37 @@ class Encoder(nn.Module):
         self.positionalEmbedding = nn.Embedding(maxLength, embeddingSize)
 
         self.layers = nn.ModuleList(
-            [TransformerBlock(embeddingSize, heads, linearDimension) for _ in range(numLayers)]
+            [TransformerBlock(embeddingSize, heads, dropout, linearDimension) for _ in range(numLayers)]
         )
+
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask):
         #N by sequenceLength
         N, sequenceLength = x.shape
 
         positions = torch.arange(0, sequenceLength).expand(N,sequenceLength).to(self.device)
-        transformerInput = self.inputEmbedding(x).to(self.device) + self.positionalEmbedding(positions).to(self.device)
-
-        for y in range(self.numLayer):
-            transformerInput = self.layers[y](transformerInput,transformerInput,transformerInput,mask)
+        transformerInput = self.dropout(
+            (self.inputEmbedding(x).to(self.device) + self.positionalEmbedding(positions).to(self.device))
+        )
+        for y in self.layers:
+            transformerInput = y(transformerInput,transformerInput,transformerInput,mask)
         return transformerInput
 
 class DecoderBlock(nn.Module):
-    def __init__(self, embeddingSize, heads, linearDimension):
+    def __init__(self, embeddingSize, heads, dropout, linearDimension):
         super(DecoderBlock, self).__init__()
         self.attention = SelfAttention(embeddingSize,heads)
         self.norm = nn.LayerNorm(embeddingSize)
-        self.transformerBlock = TransformerBlock(embeddingSize, heads, linearDimension)
-    def forward(self, x, keys, values, srcMask, trgMask):
+        self.transformerBlock = TransformerBlock(embeddingSize, heads, dropout, linearDimension)
+        self.dropout = nn.Dropout(dropout)
+    def forward(self, x, values, keys, srcMask, trgMask):
         output = self.attention(x, x, x, trgMask)
-        output = self.norm(output)
-        return self.transformerBlock(output, keys, values, srcMask)
+        output = self.dropout(self.norm(output+x))
+        return self.transformerBlock(values, keys, output, srcMask)
 
 class Decoder(nn.Module):
-    def __init__(self, vocabSize, maxLength, embeddingSize, heads, linearDimension, numLayers, device):
+    def __init__(self, vocabSize, embeddingSize, numLayers, heads, linearDimension, dropout, device, maxLength):
         super(Decoder, self).__init__()
         self.vocabSize = vocabSize
         self.maxLength = maxLength
@@ -117,25 +124,27 @@ class Decoder(nn.Module):
         self.inputEmbedding = nn.Embedding(vocabSize, embeddingSize)
         self.positionalEmbedding = nn.Embedding(maxLength, embeddingSize)
 
-        self.layers = nn.ModuleList([DecoderBlock(embeddingSize, heads, linearDimension) for _ in range(numLayers)])
+        self.layers = nn.ModuleList([DecoderBlock(embeddingSize, heads, dropout, linearDimension) for _ in range(numLayers)])
         self.fullyConnected = nn.Linear(embeddingSize, vocabSize)
-    def forward(self, src, trg, srcMask, trgMask):
+
+        self.dropout = nn.Dropout(dropout)
+    def forward(self, trg, src, srcMask, trgMask):
         N, sequenceLength = trg.shape
         positions = torch.arange(0, sequenceLength).expand(N,sequenceLength).to(self.device)
-        output = self.inputEmbedding(trg) + self.positionalEmbedding(positions)
-        for x in range(self.numLayers):
+        output = self.dropout((self.inputEmbedding(trg) + self.positionalEmbedding(positions)))
+        for y in self.layers:
             #print(output.shape)
-            output = self.layers[x](output, src, src, srcMask, trgMask)
+            output = y(output, src, src, srcMask, trgMask)
         
         #output is sequenceLength, vocabSize
         return self.fullyConnected(output)
 
 class Transformer(nn.Module):
-    def __init__(self, srcVocabSize, trgVocabSize, srcPadIndex, trgPadIndex, device="cuda:0", embeddingSize=512, numLayers=4, linearDimension=6, heads=8, maxLength=100):
+    def __init__(self, srcVocabSize, trgVocabSize, srcPadIndex, trgPadIndex, device="cuda:0", embeddingSize=512, numLayers=3, linearDimension=4, heads=8, dropout=0.1,maxLength=100):
         super(Transformer, self).__init__()
-        self.encoder = Encoder(srcVocabSize, maxLength, embeddingSize, heads, linearDimension, numLayers, device)
+        self.encoder = Encoder(srcVocabSize, embeddingSize, numLayers,heads, device, linearDimension, dropout, maxLength)
 
-        self.decoder = Decoder(trgVocabSize, maxLength, embeddingSize, heads, linearDimension, numLayers, device)
+        self.decoder = Decoder(trgVocabSize, embeddingSize, numLayers, heads, linearDimension, dropout, device, maxLength)
         self.srcPadIndex = srcPadIndex
         self.trgPadIndex = trgPadIndex
         self.device = device
@@ -152,5 +161,5 @@ class Transformer(nn.Module):
         trgMask = self.createTrgMask(trg)
 
         encoderOutput = self.encoder(src, srcMask)
-        output = self.decoder(encoderOutput, trg, srcMask, trgMask)
+        output = self.decoder(trg, encoderOutput, srcMask, trgMask)
         return output
