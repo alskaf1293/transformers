@@ -16,4 +16,5 @@ update this, I'll also clean up the code, explain more, and fix the bugs.
 ## 12/31/2022 update:
 I fixed the bug. The model now converges to produce a German to English text translator. As a sample, I used the sentence "ein pferd geht unter einer brücke neben einem boot." to see the progress of the model during training. 
 
+![alt text](https://github.com/alskaf1293/transformer/images/translateSentence.PNG?raw=true)
 
