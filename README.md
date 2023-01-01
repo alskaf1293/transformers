@@ -16,8 +16,10 @@ update this, I'll also clean up the code, explain more, and fix the bugs.
 ## 12/31/2022 update:
 I fixed the bug. The model now converges to produce a German to English text translator. As a sample, I used the sentence "ein pferd geht unter einer brücke neben einem boot." to see the progress of the model during training. 
 
-![](images/translateSentence.PNG)
+<p align = "center"><img src="images/translateSentence.PNG"></p>
 
-<p align = "center">
-    <img src="images/translateSentence.PNG">
-</p>
+After 20 epochs, which was around 12 minutes of training time on my RTX 3060 (see mom, I didn't just buy a graphics card to play video games!), you have a sentence that looks like this.
+
+<p align = "center"><img src="images/20epochsCropped.PNG"></p>
+
+The word ordering is different in comparison to Google Translate but I the meaning is still the same. The printed tensors is the loss printed after running through every batch. The structure of the model was 3 encoder and decoder layers, with a max length of 100 for the input sequences, 8 heads for every transformer block, and an embedding size of 512.
