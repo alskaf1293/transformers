@@ -18,3 +18,6 @@ I fixed the bug. The model now converges to produce a German to English text tra
 
 ![](images/translateSentence.PNG)
 
+<p align = "center">
+    <img src="images/translateSentence.PNG">
+</p>
