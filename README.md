@@ -20,6 +20,6 @@ I fixed the bug. The model now converges to produce a German to English text tra
 
 After 20 epochs, which was around 12 minutes of training time on my RTX 3060 (see mom, I didn't just buy a graphics card to play video games!), you have a sentence that looks like this.
 
-<p align = "center"><img src="images/20epochsCropped.PNG"></p>
+<p align = "center"><img src="images/20epochsCropped.png"></p>
 
 The word ordering is different in comparison to Google Translate but I the meaning is still the same. The printed tensors is the loss printed after running through every batch. The structure of the model was 3 encoder and decoder layers, with a max length of 100 for the input sequences, 8 heads for every transformer block, and an embedding size of 512.
